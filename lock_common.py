@@ -1,22 +1,34 @@
 """
-bitcoin_lock_common.py — shared utilities for Bitcoin Core lock analyzers.
+lock_common.py — shared utilities for Bitcoin Core lock analyzers.
  
-Both bitcoin_lock_analyzer.py (contention) and bitcoin_lock_held_analyzer.py
-(held-time) import from here.
+Both lock_analyzer.py (contention) and lock_held_analyzer.py (held-time)
+import from here.
  
 All durations are in microseconds (µs) internally.
+ 
+Four phases are detected in order:
+  1. HEADER SYNC  — Pre-Synchronising and Synchronizing blockheaders
+  2. IBD          — Full block download until UpdateTip progress=1.000000
+  3. POST-IBD     — Steady state
 """
 
 import re
 import statistics
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-SEP = "-" * 100
-SEP2 = "=" * 100
+SEP = "-" * 126
+SEP2 = "=" * 126
+
+# Phase boundary regexes — all keyed on timestamp
+HEADER_SYNC_REGEX = re.compile(
+    r"(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)"
+    r".*Synchronizing blockheaders.*100\.00"
+)
 
 IBD_END_REGEX = re.compile(
     r"(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)"
@@ -30,7 +42,6 @@ class LockStats:
     lock_name: str
     location: str
     durations_us: list = field(default_factory=list)
-    unmatched_starts: int = 0
 
     @property
     def count(self) -> int:
@@ -68,10 +79,12 @@ class LockStats:
 
 def us_to_human(us: float) -> str:
     if us >= 60_000_000:
-        return f"{us / 60_000:.2f}min"
+        return f"{us / 60_000_000:.2f}min"
     if us >= 1_000_000:
-        return f"{us / 1_000:.2f}s"
-    return f"{us:.0f}ms"
+        return f"{us / 1_000_000:.2f}s"
+    if us >= 1_000:
+        return f"{us / 1_000:.2f}ms"
+    return f"{us:.0f}µs"
 
 def bar(value: float, max_val: float, width: int = 28) -> str:
     if max_val == 0:
@@ -81,44 +94,73 @@ def bar(value: float, max_val: float, width: int = 28) -> str:
 
 # ── Phase-aware log parser ───────────────────────────────────────────────────
 
+def _detect_phase_boundary(line: str, current: str | None, regex: re.Pattern[str]) -> str | None:
+    """Return the timestamp if regex matches and boundary not yet set, else current."""
+    if current is not None:
+        return current
+    match = regex.search(line)
+    return match.group("ts") if match else None
+
+# returns the stats dictionary to be used based on the timestamp
+def _assign_phase(ts: str, phases: list[tuple[str | None, dict]]) -> dict:
+    for boundary_end_ts, stats in phases:
+        if boundary_end_ts is not None and ts > boundary_end_ts:
+            return stats
+    return phases[-1][1]
+
+
 def parse_log(lines, line_parser):
     """
-    Iterate over log lines, split into IBD and post-IBD phases, and accumulate
+    Iterate over log lines, split into three phases, and accumulate
     LockStats using the provided line_parser callback.
  
     line_parser(line) -> (key, lock_name, location, durations_us) | None
         Called for each line; return None to skip the line.
  
-    Returns (ibd_stats, post_ibd_stats, ibd_end_ts).
+    Returns (header_sync_stats, ibd_stats, post_ibd_stats, phase_ts).
+    where phase_ts is a dict with keys 'header_sync_end', 'ibd_end'.
     """
+    header_sync_stats: dict[str, LockStats] = {}
     ibd_stats: dict[str, LockStats] = {}
     post_ibd_stats: dict[str, LockStats] = {}
+
+    first_ts: str | None = None
+    header_sync_end_ts: str | None = None
     ibd_end_ts: str | None = None
 
+    events = []
     for raw in lines:
         line = raw.strip()
 
-        if ibd_end_ts is None:
-            m = IBD_END_REGEX.search(line)
-            if m:
-                ibd_end_ts = m.group("ts")
+        # Detect phase boundaries.
+        header_sync_end_ts = _detect_phase_boundary(line, header_sync_end_ts, HEADER_SYNC_REGEX)
+        ibd_end_ts = _detect_phase_boundary(line, ibd_end_ts, IBD_END_REGEX)
 
         result = line_parser(line)
-        if result is None:
-            continue
+        if result is not None:
+            events.append(result)
 
-        ts, key, lock_name, location, durations_us = result
-
-        if ibd_end_ts is not None and ts is not None and ts >= ibd_end_ts:
-            stats = post_ibd_stats
-        else:
-            stats = ibd_stats
+    phases = [
+        (ibd_end_ts, post_ibd_stats),
+        (header_sync_end_ts, ibd_stats),
+        (None, header_sync_stats),
+    ]
+    for ts, key, lock_name, location, durations_us in events:
+        if first_ts is None:
+            first_ts = ts
+        stats = _assign_phase(ts, phases)
 
         if key not in stats:
             stats[key] = LockStats(lock_name=lock_name, location=location)
         stats[key].durations_us.append(durations_us)
 
-    return ibd_stats, post_ibd_stats, ibd_end_ts
+    phase_ts = {
+        "first_ts": first_ts,
+        "header_sync_end": header_sync_end_ts,
+        "ibd_end": ibd_end_ts,
+    }
+
+    return header_sync_stats, ibd_stats, post_ibd_stats, phase_ts
 
 # ── Report printer ───────────────────────────────────────────────────────────
 
@@ -155,11 +197,11 @@ def print_report(stats: dict[str, LockStats], title: str, event_label: str = "wa
     max_mean = max(lock.mean_us for lock in all_locks)
 
     # ── Summary table ────────────────────────────────────────────────────────
-    print(f"  {'LOCK':<38} {'LOCATION':<30} {'CNT':>5}  {'TOTAL':>9}  {'MEAN':>9}  {'P95':>9}  {'MAX':>9}")
+    print(f"  {'LOCK':<38} {'LOCATION':<35} {'CNT':>5}  {'TOTAL':>9}  {'MEAN':>9}  {'P95':>9}  {'MAX':>9}")
     print(SEP)
     for lock in all_locks:
         print(
-            f"  {lock.lock_name:<38} {lock.location:<30} {lock.count:>5}"
+            f"  {lock.lock_name:<38} {lock.location:<35} {lock.count:>5}"
             f"  {us_to_human(lock.total_us):>9}"
             f"  {us_to_human(lock.mean_us):>9}"
             f"  {us_to_human(lock.p95_us):>9}"
@@ -206,42 +248,6 @@ def print_report(stats: dict[str, LockStats], title: str, event_label: str = "wa
 
     print()
 
-# ── IBD vs post-IBD comparison ───────────────────────────────────────────────
-
-def print_comparison(ibd: dict, post: dict, event_label: str = "wait") -> None:
-    """Side-by-side mean comparison for locks present in both phases."""
-    common = sorted(set(ibd) & set(post))
-    if not common:
-        return
-
-    print(f"\n{SEP2}")
-    print(f"  IBD vs POST-IBD  —  MEAN {event_label.upper()} TIME COMPARISON  (locks present in both phases)")
-    print(SEP2)
-    print(f"  {'LOCK':<38}  {'LOCATION':<35}  {'IBD mean':>10}  {'Post mean':>10}  {'Delta':>13}  {'ratio':>7}")
-    print(SEP)
-
-    rows = []
-    for key in common:
-        ibd, post_ibd = ibd[key], post[key]
-        if ibd.count == 0 or post_ibd.count == 0:
-            continue
-
-        delta = post_ibd.mean_us - ibd.mean_us
-        ratio = post_ibd.mean_us / ibd.mean_us if ibd.mean_us else float("inf")
-        rows.append((abs(delta), ibd.lock_name, ibd.location, ibd, post_ibd, delta, ratio))
-    rows.sort(reverse=True)
-
-    for _, lock_name, location, ibd, post_ibd, delta, ratio, in rows:
-        sign = "+" if delta >= 0 else ""
-        print(
-            f"  {lock_name:<38}  {location:<35}"
-            f"  {us_to_human(i.mean_us):>10}"
-            f"  {us_to_human(p.mean_us):>10}"
-            f"  {sign}{us_to_human(delta):>12}"
-            f"  {ratio:>6.2f}x"
-        )
-    print()
-
 # ── CLI argument / file handling ─────────────────────────────────────────────
 
 def open_log(script_name: str) -> object:
@@ -268,11 +274,37 @@ def open_log(script_name: str) -> object:
         )
     return default.open(encoding="utf-8", errors="replace")
 
-def print_ibd_header(ibd_end_ts: str | None) -> None:
-    if ibd_end_ts:
-        print(f"\n  IBD end detected at: {ibd_end_ts}  (UpdateTip progress=1.000000)")
-    else:
-        print("\n  NOTE: No 'UpdateTip progress=1.000000' line found.")
-        print("  The node may still be in IBD, or the log was captured post-sync.")
-        print("  All events will appear under IBD.\n")
+def _ts_diff(start: str, end: str) -> str:
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    delta = datetime.strptime(end, fmt) - datetime.strptime(start, fmt)
+    h, rem = divmod(int(delta.total_seconds()), 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}h {m}m {s}s"
 
+def print_phase_header(phase_ts: dict) -> None:
+    first_ts = phase_ts.get("first_ts")
+    header_sync_end = phase_ts.get("header_sync_end")
+    ibd_end = phase_ts.get("ibd_end")
+
+    print()
+    if first_ts and header_sync_end:
+        print(f"  Header sync end:  {header_sync_end}  (duration: {_ts_diff(first_ts, header_sync_end)})")
+    elif header_sync_end:
+        print(f"  Header sync end:  {header_sync_end}")
+    else:
+        print("  NOTE: No 'Synchronizing blockheaders ~100.00%' line found.")
+        print("  Node may still be in header sync, or log was captured after completion.")
+    print()
+
+    if header_sync_end and ibd_end:
+        print(f"  IBD end:          {ibd_end}  (duration: {_ts_diff(header_sync_end, ibd_end)})")
+    elif ibd_end:
+        print(f"  IBD end:          {ibd_end}")
+    else:
+        print("  NOTE: No 'UpdateTip progress=1.000000' line found.")
+        if header_sync_end:
+            print("  Node is still in IBD.")
+        else:
+            print("  Node may still be in header sync or IBD, or log was captured post-sync.")
+
+    print()

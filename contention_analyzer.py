@@ -7,8 +7,10 @@ Parses lines emitted by DEBUG_LOCKCONTENTION e.g.:
  
 Requires bitcoind to be run with -debug=lock.
  
-Automatically splits stats into IBD vs post-IBD phases by detecting the first
-UpdateTip line where progress=1.000000.
+Splits stats into three phases:
+  1. Header sync  — Synchronizing blockheaders
+  2. IBD          — Full block download until UpdateTip progress=1.000000
+  3. Post-IBD     — Steady state
  
 Usage:
     python3 lock_analyzer.py                        # reads ~/.bitcoin/debug.log
@@ -21,7 +23,7 @@ import re
 
 from lock_common import (
     LockStats, open_log, parse_log,
-    print_comparison, print_ibd_header, print_report,
+    print_phase_header, print_report,
 )
 
 # Matches completed contention lines e.g.:
@@ -47,17 +49,18 @@ def line_parser(line: str):
     return ts, key, lock, location, duration_us
 
 def main() -> None:
-    lines = open_log("lock_analyzer")
+    lines = open_log("lock_analyzer.py")
     try:
-        ibd_stats, post_stats, ibd_end_ts = parse_log(lines, line_parser)
+        header_sync_stats, ibd_stats, post_stats, phase_ts = parse_log(lines, line_parser)
     finally:
         if hasattr(lines, "close") and lines is not sys.stdin:
             lines.close()
 
-    print_ibd_header(ibd_end_ts)
-    print_report(ibd_stats,  "PHASE 1 — INITIAL BLOCK DOWNLOAD (IBD)",  event_label="wait")
-    print_report(post_stats, "PHASE 2 — POST-IBD (steady state)",        event_label="wait")
-    print_comparison(ibd_stats, post_stats, event_label="wait")
+    print_phase_header(phase_ts)
+
+    print_report(header_sync_stats, "PHASE 1 — HEADER SYNC", event_label="wait")
+    print_report(ibd_stats, "PHASE 2 — IBD (initial block download)", event_label="wait")
+    print_report(post_stats, "PHASE 3 — POST-IBD (steady state)", event_label="wait")
 
 if __name__ == "__main__":
     main()
