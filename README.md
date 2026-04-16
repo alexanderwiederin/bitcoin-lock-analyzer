@@ -1,6 +1,21 @@
 # bitcoin-lock-analyzer
 Analyzes Bitcoin Core debug.log lock contention
 
+### Limitations
+
+Phase boundaries are detected via log line pattern matching. `Synchronizing
+blockheaders ~100.00` for Header Sync end and `UpdateTip: progress=1.000000`
+for IBD end. This is brittle but sufficient for the goal of reducing phase
+pollution.
+
+Three deeper limitations apply to the analysis itself:
+
+**Conention data measures collisions, not opportunities.** Threads structurally prevented from running concurrently never appear in the data.
+
+**Lock Held data is samled.** Only lock events above the logging threshold of 1ms are recorded. Short holds are invisible.
+
+**IBD is the wrong phase for actionable conclusions.** The pipeline is intentionally sequential so contention is suppressed.
+
 ## Instructions
 
 ### Enable lock logging in Bitcoin Core
@@ -48,17 +63,3 @@ python3 lock_held_analyzer.py
 python3 lock_held_analyzer.py /path/to/debug.log
 ```
 
-### Limitations
-
-Phase boundaries are detected via log line pattern matching. `Synchronizing
-blockheaders ~100.00` for Header Sync end and `UpdateTip: progress=1.000000`
-for IBD end. This is brittle but sufficient for the goal of reducing phase
-pollution.
-
-Three deeper limitations apply to the analysis itself:
-
-**Conention data measures collisions, not opportunities.** Threads structurally prevented from running concurrently never appear in the data.
-
-**Lock Held data is samled.** Only lock events above the logging threshold of 1ms are recorded. Short holds are invisible.
-
-**IBD is the wrong phase for actionable conclusions.** The pipeline is intentionally sequential so contention is suppressed.
