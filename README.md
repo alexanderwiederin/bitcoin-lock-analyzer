@@ -57,7 +57,7 @@ pollution.
 
 Three deeper limitations apply to the analysis itself:
 
-**Conention data is measures collisions, not opportunities.** Threads structurally prevented from running concurrently never appear in the data.
+**Conention data measures collisions, not opportunities.** Threads structurally prevented from running concurrently never appear in the data.
 
 **Lock Held data is samled.** Only lock events above the logging threshold of 1ms are recorded. Short holds are invisible.
 
