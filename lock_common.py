@@ -210,10 +210,11 @@ def print_report(stats: dict[str, LockStats], title: str, event_label: str = "wa
     print(SEP)
 
     # ── Total time bar chart ─────────────────────────────────────────────────
+    total_time = sum(lock.total_us for lock in all_locks)
     print(f"\n  Total {event_label} time")
     for lock in all_locks:
-        pct = lock.total_us / max_total * 100
-        print(f"  {lock.lock_name:<38} {bar(lock.total_us, max_total)}  {us_to_human(lock.total_us):>9}  ({pct:5.1f}%)")
+        pct = lock.total_us / total_time * 100
+        print(f"  {lock.lock_name:<38} {bar(lock.total_us, total_time)}  {us_to_human(lock.total_us):>9}  ({pct:5.1f}%)")
 
     # ── Mean time bar chart ──────────────────────────────────────────────────
     print(f"\n  Mean {event_label} time")
@@ -224,18 +225,22 @@ def print_report(stats: dict[str, LockStats], title: str, event_label: str = "wa
     # ── Distribution buckets ─────────────────────────────────────────────────
     print(f"\n  Distribution buckets (all locks combined)")
     counts = {label: 0 for label, _, _ in _BUCKETS}
+    totals = {label: 0 for label, _, _ in _BUCKETS}
     all_dur = [duration for lock in all_locks for duration in lock.durations_us]
     for duration in all_dur:
         for label, lo, hi in _BUCKETS:
             if hi is None or duration < hi:
                 counts[label] += 1
+                totals[label] += duration
                 break
 
     total_events = len(all_dur)
-    max_bucket = max(counts.values(), default=1)
-    for label, cnt, in counts.items():
-        pct = (cnt / total_events * 100) if total_events else 0
-        print(f"  {label:<12} {bar(cnt, max_bucket)}  {cnt:>6} events  ({pct:5.1f}%)")
+    for label, lo, hi in _BUCKETS:
+        cnt = counts[label]
+        tot = totals[label]
+        pct_cnt = (cnt / total_events * 100) if total_events else 0
+        pct_time = (tot / total_time * 100) if total_time else 0
+        print(f"  {label:<12} {bar(tot, total_time)}  {cnt:>6} events  ({pct_cnt:5.1f}%)  {us_to_human(tot):>9}  ({pct_time:5.1f}%)")
 
     # ── Top 10 longest individual events ────────────────────────────────────
     print(f"\n  Top 10 longest individual {event_label}s")
