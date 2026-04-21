@@ -19,6 +19,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+# Locks excluded from held-time analysis — these are condition variable
+# wait locks whose "held time" is sleep time, not actual lock contention.
+EXCLUDE_LOCKS = {"newTaskMutex"}
+
 # ── Constants ────────────────────────────────────────────────────────────────
 
 SEP = "-" * 126
@@ -185,7 +189,7 @@ def print_report(stats: dict[str, LockStats], title: str, event_label: str = "wa
         return
 
     all_locks = sorted(
-        (lock for lock in stats.values() if lock.count > 0),
+        (lock for lock in stats.values() if lock.count > 0 and lock.lock_name not in EXCLUDE_LOCKS),
         key=lambda lock: lock.total_us,
         reverse=True,
     )
@@ -195,6 +199,8 @@ def print_report(stats: dict[str, LockStats], title: str, event_label: str = "wa
 
     max_total = all_locks[0].total_us
     max_mean = max(lock.mean_us for lock in all_locks)
+    if EXCLUDE_LOCKS:
+        print(f"  (excluded from analysis: {', '.join(sorted(EXCLUDE_LOCKS))} — CV wait locks)")
 
     # ── Summary table ────────────────────────────────────────────────────────
     print(f"  {'LOCK':<38} {'LOCATION':<35} {'CNT':>5}  {'TOTAL':>9}  {'MEAN':>9}  {'P95':>9}  {'MAX':>9}")
