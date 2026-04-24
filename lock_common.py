@@ -228,19 +228,6 @@ def print_report(stats: dict[str, LockStats], title: str, event_label: str = "wa
         )
     print(SEP)
 
-    # ── Total time bar chart ─────────────────────────────────────────────────
-    total_time = sum(lock.total_us for lock in all_locks)
-    print(f"\n  Total {event_label} time")
-    for lock in all_locks:
-        pct = lock.total_us / total_time * 100
-        print(f"  {lock.lock_name:<38} {bar(lock.total_us, total_time)}  {us_to_human(lock.total_us):>9}  ({pct:5.1f}%)")
-
-    # ── Mean time bar chart ──────────────────────────────────────────────────
-    print(f"\n  Mean {event_label} time")
-    for lock in sorted(all_locks, key=lambda lock: lock.mean_us, reverse=True):
-        pct = lock.mean_us / max_mean * 100
-        print(f"  {lock.lock_name:<38} {bar(lock.mean_us, max_mean)}  {us_to_human(lock.mean_us):>9}  ({pct:5.1f}%)")
-
     # ── Distribution buckets ─────────────────────────────────────────────────
     print(f"\n  Distribution buckets (all locks combined)")
     counts = {label: 0 for label, _, _ in _BUCKETS}
