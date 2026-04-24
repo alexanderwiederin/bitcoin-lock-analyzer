@@ -30,8 +30,8 @@ excluded_names = [e if isinstance(e, str) else f"{e[0]} @ {e[1]}" for e in EXCLU
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-SEP = "-" * 126
-SEP2 = "=" * 126
+SEP = "-" * 180
+SEP2 = "=" * 180
 
 # Phase boundary regexes — all keyed on timestamp
 HEADER_SYNC_REGEX = re.compile(
@@ -95,7 +95,7 @@ def us_to_human(us: float) -> str:
         return f"{us / 1_000:.2f}ms"
     return f"{us:.0f}µs"
 
-def bar(value: float, max_val: float, width: int = 28) -> str:
+def bar(value: float, max_val: float, width: int = 23) -> str:
     if max_val == 0:
         return "░" * width
     filled = int(round(value / max_val * width))
@@ -213,12 +213,16 @@ def print_report(stats: dict[str, LockStats], title: str, event_label: str = "wa
         print(f"  (excluded from analysis: {', '.join(sorted(EXCLUDE_LOCKS))} — CV wait locks)")
 
     # ── Summary table ────────────────────────────────────────────────────────
-    print(f"  {'LOCK':<38} {'LOCATION':<35} {'CNT':>5}  {'TOTAL':>9}  {'MEAN':>9}  {'P95':>9}  {'MAX':>9}")
+    print(f"  {'LOCK':<38} {'LOCATION':<35} {'CNT':>10}  {'TOTAL':>15}  {'SHARE OF TIME':<23}  {'PCT':>6}  {'MEAN':>9}  {'P95':>9}  {'MAX':>9}")
     print(SEP)
     for lock in all_locks:
+        pct = lock.total_us / total_time * 100
+        short_loc = lock.location.split("/")[-1]
         print(
-            f"  {lock.lock_name:<38} {lock.location:<35} {lock.count:>5}"
-            f"  {us_to_human(lock.total_us):>9}"
+            f"  {lock.lock_name:<38} {short_loc:<35} {lock.count:>10}"
+            f"  {us_to_human(lock.total_us):>15}"
+            f"  {bar(lock.total_us, total_time):<23}"
+            f"  {pct:>5.1f}%"
             f"  {us_to_human(lock.mean_us):>9}"
             f"  {us_to_human(lock.p95_us):>9}"
             f"  {us_to_human(lock.max_us):>9}"
