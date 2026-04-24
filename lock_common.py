@@ -209,8 +209,7 @@ def print_report(stats: dict[str, LockStats], title: str, event_label: str = "wa
 
     max_total = all_locks[0].total_us
     max_mean = max(lock.mean_us for lock in all_locks)
-    if EXCLUDE_LOCKS:
-        print(f"  (excluded from analysis: {', '.join(sorted(EXCLUDE_LOCKS))} — CV wait locks)")
+    total_time = sum(lock.total_us for lock in all_locks)
 
     # ── Summary table ────────────────────────────────────────────────────────
     print(f"  {'LOCK':<38} {'LOCATION':<35} {'CNT':>10}  {'TOTAL':>15}  {'SHARE OF TIME':<23}  {'PCT':>6}  {'MEAN':>9}  {'P95':>9}  {'MAX':>9}")
