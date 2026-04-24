@@ -21,7 +21,12 @@ from pathlib import Path
 
 # Locks excluded from held-time analysis — these are condition variable
 # wait locks whose "held time" is sleep time, not actual lock contention.
-EXCLUDE_LOCKS = {"newTaskMutex"}
+EXCLUDE_LOCKS = {
+    "newTaskMutex",
+    ("m_mutex", "threadpool.h:62"),
+    ("m_mutex", "checkqueue.h:82"),
+}
+excluded_names = [e if isinstance(e, str) else f"{e[0]} @ {e[1]}" for e in EXCLUDE_LOCKS]
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -189,13 +194,18 @@ def print_report(stats: dict[str, LockStats], title: str, event_label: str = "wa
         return
 
     all_locks = sorted(
-        (lock for lock in stats.values() if lock.count > 0 and lock.lock_name not in EXCLUDE_LOCKS),
+        (lock for lock in stats.values() if lock.count > 0
+            and lock.lock_name not in EXCLUDE_LOCKS
+            and (lock.lock_name, lock.location.split("/")[-1]) not in EXCLUDE_LOCKS),
         key=lambda lock: lock.total_us,
         reverse=True,
     )
     if not all_locks:
         print(f"   (no completed lock {event_label} events in this phase)\n")
         return
+
+    if EXCLUDE_LOCKS:
+        print(f"  (excluded from analysis: {', '.join(sorted(excluded_names))} — lock held during condition variable sleep, not contention)")
 
     max_total = all_locks[0].total_us
     max_mean = max(lock.mean_us for lock in all_locks)
