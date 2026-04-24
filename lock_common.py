@@ -248,7 +248,26 @@ def print_report(stats: dict[str, LockStats], title: str, event_label: str = "wa
         pct_time = (tot / total_time * 100) if total_time else 0
         print(f"  {label:<12} {bar(tot, total_time)}  {cnt:>6} events  ({pct_cnt:5.1f}%)  {us_to_human(tot):>9}  ({pct_time:5.1f}%)")
 
+        # Show which locks contribute to this bucket
+        bucket_locks = sorted(
+            [(lock, sum(d for d in lock.durations_us if d >= lo and (hi is None or d < hi)))
+             for lock in all_locks],
+            key=lambda x: x[1],
+            reverse=True
+        )
+        for lock, lock_tot in bucket_locks:
+            if lock_tot == 0:
+                continue
+            lock_cnt = sum(1 for d in lock.durations_us if d >= lo and (hi is None or d < hi))
+            pct = lock_tot / tot * 100 if tot else 0
+
+            if pct < 1.0:
+                continue
+
+            print(f"    {lock.lock_name:<38} {lock.location:<35} {lock_cnt:>6} events  {us_to_human(lock_tot):>9}  ({pct:5.1f}%)")
+
     # ── Top 10 longest individual events ────────────────────────────────────
+
     print(f"\n  Top 10 longest individual {event_label}s")
     events = [(duration, lock.lock_name, lock.location) for lock in all_locks for duration in lock.durations_us]
     events.sort(reverse=True)
