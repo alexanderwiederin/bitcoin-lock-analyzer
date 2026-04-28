@@ -23,8 +23,7 @@ from pathlib import Path
 # wait locks whose "held time" is sleep time, not actual lock contention.
 EXCLUDE_LOCKS = {
     "newTaskMutex",
-    ("m_mutex", "threadpool.h:62"),
-    ("m_mutex", "checkqueue.h:82"),
+    "NetEventsInterface::g_msgproc_mutex",
 }
 excluded_names = [e if isinstance(e, str) else f"{e[0]} @ {e[1]}" for e in EXCLUDE_LOCKS]
 
