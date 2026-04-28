@@ -133,6 +133,7 @@ def parse_log(lines, line_parser):
     post_ibd_stats: dict[str, LockStats] = {}
 
     first_ts: str | None = None
+    last_ts: str | None = None
     header_sync_end_ts: str | None = None
     ibd_end_ts: str | None = None
 
@@ -156,6 +157,7 @@ def parse_log(lines, line_parser):
     for ts, key, lock_name, location, durations_us in events:
         if first_ts is None:
             first_ts = ts
+        last_ts = ts
         stats = _assign_phase(ts, phases)
 
         if key not in stats:
@@ -164,6 +166,7 @@ def parse_log(lines, line_parser):
 
     phase_ts = {
         "first_ts": first_ts,
+        "last_ts": last_ts,
         "header_sync_end": header_sync_end_ts,
         "ibd_end": ibd_end_ts,
     }
@@ -312,6 +315,7 @@ def _ts_diff(start: str, end: str) -> str:
 
 def print_phase_header(phase_ts: dict) -> None:
     first_ts = phase_ts.get("first_ts")
+    last_ts = phase_ts.get("last_ts")
     header_sync_end = phase_ts.get("header_sync_end")
     ibd_end = phase_ts.get("ibd_end")
 
@@ -335,5 +339,9 @@ def print_phase_header(phase_ts: dict) -> None:
             print("  Node is still in IBD.")
         else:
             print("  Node may still be in header sync or IBD, or log was captured post-sync.")
+
+    if last_ts:
+        duration = f"  (duration: {_ts_diff(first_ts, last_ts)})" if first_ts else ""
+        print(f"  Log ends:         {last_ts}{duration}")
 
     print()
