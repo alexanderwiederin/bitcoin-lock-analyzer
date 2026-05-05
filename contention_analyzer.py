@@ -33,6 +33,7 @@ LOCK_REGEX = re.compile(
     r"\s+\[lock\]\s+ContendedLock:\s+lock\s+contention\s+"
     r"(?P<lock>\S+),\s+"
     r"(?P<location>\S+)\s+"
+    r"\(thread:\s*(?P<thread>[^)]+)\)\s+"
     r"completed"
     r"\s+\((?P<duration>\d+)[μu]s\)"
 )
@@ -45,8 +46,9 @@ def line_parser(line: str):
     lock = match.group("lock")
     location = match.group("location").replace("./", "")
     duration_us = int(match.group("duration"))
+    thread_name = match.group("thread")
     key = f"{lock}@{location}"
-    return ts, key, lock, location, duration_us
+    return ts, key, lock, location, duration_us, thread_name
 
 def main() -> None:
     lines = open_log("lock_analyzer.py")

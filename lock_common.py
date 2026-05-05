@@ -50,6 +50,12 @@ class LockStats:
     lock_name: str
     location: str
     durations_us: list = field(default_factory=list)
+    thread_durations: dict = field(default_factory=dict)
+
+    def add(self, durations_us: int, thread_name: str | None = None) -> None:
+        self.durations_us.append(durations_us)
+        if thread_name:
+            self.thread_durations.setdefault(thread_name, []).append(durations_us)
 
     @property
     def count(self) -> int:
@@ -154,7 +160,7 @@ def parse_log(lines, line_parser):
         (header_sync_end_ts, ibd_stats),
         (None, header_sync_stats),
     ]
-    for ts, key, lock_name, location, durations_us in events:
+    for ts, key, lock_name, location, durations_us, thread_name in events:
         if first_ts is None:
             first_ts = ts
         last_ts = ts
@@ -162,7 +168,7 @@ def parse_log(lines, line_parser):
 
         if key not in stats:
             stats[key] = LockStats(lock_name=lock_name, location=location)
-        stats[key].durations_us.append(durations_us)
+        stats[key].add(durations_us, thread_name)
 
     phase_ts = {
         "first_ts": first_ts,
@@ -228,6 +234,26 @@ def print_report(stats: dict[str, LockStats], title: str, event_label: str = "wa
             f"  {us_to_human(lock.p95_us):>9}"
             f"  {us_to_human(lock.max_us):>9}"
         )
+        if lock.thread_durations:
+            sorted_threads = sorted(lock.thread_durations.items(),
+                                    key=lambda x: sum(x[1]), reverse=True)
+            for thread, durs in sorted_threads:
+                t_total = sum(durs)
+                t_pct = t_total / lock.total_us * 100
+                t_mean = statistics.mean(durs)
+                t_max = max(durs)
+                print(
+                    f"    {'↳ ' + thread:<36} {'':35} {len(durs):>10}"
+                    f"  {us_to_human(t_total):>15}"
+                    f"  {'':23}"
+                    f"  {t_pct:>5.1f}%"
+                    f"  {us_to_human(t_mean):>9}"
+                    f"  {'':9}"
+                    f"  {us_to_human(t_max):>9}"
+                )
+
+        print()
+
     print(SEP)
 
     # ── Distribution buckets ─────────────────────────────────────────────────
@@ -271,12 +297,17 @@ def print_report(stats: dict[str, LockStats], title: str, event_label: str = "wa
     # ── Top 10 longest individual events ────────────────────────────────────
 
     print(f"\n  Top 10 longest individual {event_label}s")
-    events = [(duration, lock.lock_name, lock.location) for lock in all_locks for duration in lock.durations_us]
+    events = [
+        (duration, lock.lock_name, lock.location, thread)
+        for lock in all_locks
+        for thread, durs in lock.thread_durations.items()
+        for duration in durs
+    ]
     events.sort(reverse=True)
-    print(f"  {'DURATION':>10}  {'LOCK':<38}  LOCATION")
+    print(f"  {'DURATION':>10}  {'LOCK':<38}  {'THREAD':<15}  LOCATION")
     print(SEP)
-    for duration, lock_name, location in events[:10]:
-        print(f"  {us_to_human(duration):>10}  {lock_name:<38}  {location}")
+    for duration, lock_name, location, thread in events[:10]:
+        print(f"  {us_to_human(duration):>10}  {lock_name:<38}  {thread:<15}  {location}")
 
     print()
 

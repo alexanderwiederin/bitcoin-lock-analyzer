@@ -33,6 +33,7 @@ HELD_REGEX = re.compile(
     r"\s+\[lock\]\s+LOCK HELD (?P<duration_us>\d+)us:\s+"
     r"(?P<lock>\S+)\s+"
     r"\(held at\s+(?P<file>[^:)]+):(?P<line>\d+)\)"
+    r"\s+\(thread:\s*(?P<thread>[^)]+)\)"
 )
 
 def line_parser(line: str):
@@ -45,8 +46,9 @@ def line_parser(line: str):
     if lock == "mut" and "threadinterrupt" in location:
         return None
     duration_us = int(match.group("duration_us"))
+    thread_name = match.group("thread")
     key = f"{lock}@{location}"
-    return ts, key, lock, location, duration_us
+    return ts, key, lock, location, duration_us, thread_name
 
 def main() -> None:
     lines = open_log("lock_held_analyzer.py")
